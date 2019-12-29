@@ -1,4 +1,4 @@
-# rec-sdk
+# CloudRecordDemo
 
 ## Project setup
 ```
