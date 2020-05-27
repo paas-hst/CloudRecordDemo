@@ -1,7 +1,7 @@
 <template>
   <div id="base">
     <div class="rec-container">
-      <Header :appId="appId" :title="title" :btnText="btnText" :goto="goto"></Header>
+      <Header :dvlpId="dvlpId" :title="title" :btnText="btnText" :goto="goto"></Header>
       <div class="container rec-content">
         <router-view @updateAttr="updateAttr" ref="child"></router-view>
       </div>
@@ -24,20 +24,16 @@ export default {
 
   data() {
     return {
-      // 与录制服务器的连接
-      recSocket: null,
       // 与事件网关的连接
-      gwSocket: null,
-      // App ID
-      appId: localStorage.getItem("appId"),
+      eventGwSocket: null,
+      // 开发者ID
+      dvlpId: localStorage.getItem("dvlpId"),
       // Header显示的title
       title: "",
       // Header右侧的button上显示的文字
       btnText: "",
       // 点击Header右侧button跳转的地址
       goto: "",
-      // 是否已经成功登录录制服务器
-      isLoginRecServer: false,
       // 是否已经成功登陆事件网关
       isLoginEventGW: false
     };
@@ -53,42 +49,37 @@ export default {
      * 初始化
      */
     initGwSocket() {
-      this.xxx = "200";
-      this.gwSocket = new WebSocket(
-        localStorage.getItem("privateCloud") == "true"
-          ? localStorage.getItem("privateGwUrl")
-          : localStorage.getItem("publicGwUrl")
-      );
-      this.gwSocket.onopen = this.gwSocketOnopen;
-      this.gwSocket.onerror = this.gwSocketOnerror;
-      this.gwSocket.onclose = this.gwSocketClose;
-      this.gwSocket.onmessage = this.gwSocketOnmessage;
+      this.eventGwSocket = new WebSocket(localStorage.getItem("eventGwUrl"));
+      this.eventGwSocket.onopen = this.socketOnopen;
+      this.eventGwSocket.onerror = this.socketOnerror;
+      this.eventGwSocket.onclose = this.socketClose;
+      this.eventGwSocket.onmessage = this.socketOnmessage;
     },
     /**
-     * GW服务器连接成功事件
+     * 事件网关连接成功事件
      */
-    gwSocketOnopen() {
+    socketOnopen() {
       console.log("连接Event Gateway成功");
       this.loginEventGateway();
     },
     /**
-     * GW服务器连接失败事件
+     * 事件网关连接失败事件
      */
-    gwSocketOnerror() {
+    socketOnerror() {
       console.error("连接Event Gateway时发生错误");
     },
     /**
-     * GW服务器连接关闭事件
+     * 事件网关连接关闭事件
      * @param e
      */
-    gwSocketClose(e) {
+    socketClose(e) {
       console.warn("Event Gateway connection closed (" + e.code + ")");
     },
     /**
-     * 接收到来自GW的消息
+     * 接收到来自事件网关的消息
      * @param e
      */
-    gwSocketOnmessage(e) {
+    socketOnmessage(e) {
       let response = e.data;
       let rsp = null;
       if (
@@ -101,14 +92,11 @@ export default {
         rsp = response;
       }
       console.log("===> Event Gateway：" + JSON.stringify(rsp));
-      if (rsp.id === 20001) {
-        //登录响应
+      if (rsp.id === 20001) { //登录响应
         if (rsp.result === 0) {
           console.log("登录Event Gateway成功！");
           this.isLoginEventGW = true;
-          if (this.isLoginRecServer) {
-            this.$refs.child.onBaseReady();
-          }
+          this.$refs.child.onBaseReady();
         } else {
           console.error("登录Event Gateway失败，" + rsp.message);
           this.$router.push({ path: "/login" });
@@ -118,125 +106,32 @@ export default {
       }
     },
     /**
-     * 发送消息给GW服务器
+     * 发送消息给事件网关
      * @param params
      */
-    gwSocketSend(params) {
-      params.business = "EP";
+    sendMsgToEventGW(params) {
       params.seq_id = new Date().getTime();
       let paramsStr = JSON.stringify(params);
       console.log("<=== Event Gateway：" + paramsStr);
-      this.gwSocket.send(paramsStr);
+      this.eventGwSocket.send(paramsStr);
     },
     /**
-     * 登录GW服务器
+     * 登录事件网关
      */
     loginEventGateway() {
       let params = {
         id: 20000,
-        app_id: localStorage.getItem("appId"),
-        token: sessionStorage.getItem("token")
+        dev_id: localStorage.getItem("dvlpId"),
+        token: localStorage.getItem("accessToken")
       };
-      this.gwSocketSend(params);
-    },
-    /**
-     * 初始化录制服务器的连接
-     */
-    initRecSocket() {
-      this.recSocket = new WebSocket(
-        localStorage.getItem("privateCloud") == "true"
-          ? localStorage.getItem("privateRecUrl")
-          : localStorage.getItem("publicRecUrl")
-      );
-      this.recSocket.onopen = this.recSocketOnopen;
-      this.recSocket.onerror = this.recSocketOnerror;
-      this.recSocket.onmessage = this.recSocketOnmessage;
-      this.recSocket.onclose = this.recSocketClose;
-    },
-    /**
-     * 录制服务器连接成功事件
-     */
-    recSocketOnopen() {
-      console.log("连接Record Server成功");
-      this.loginRecordServer();
-    },
-    /**
-     * 录制服务器连接失败事件
-     */
-    recSocketOnerror() {
-      console.error("连接Record Server发生错误");
-      this.$router.push({ path: "/login" });
-    },
-    /**
-     * 收到录制服务器的消息
-     * @param e
-     */
-    recSocketOnmessage(e) {
-      let rsp = e.data;
-      let result = null;
-      if (rsp.id == null || rsp.id === "undefined" || rsp.id === "null") {
-        result = JSON.parse(rsp);
-      } else {
-        result = rsp;
-      }
-      console.log("===> Record Server：" + JSON.stringify(result));
-      if (result.id === 0x2001) {
-        if (result.code !== 0) {
-          console.error("登录Record Server失败！");
-          this.$router.push({ path: "/login" });
-        } else {
-          console.log("登录Record Server成功！");
-          this.isLoginRecServer = true;
-          if (this.isLoginEventGW) {
-            this.$refs.child.onBaseReady();
-          }
-        }
-      }
-    },
-    /**
-     * 断开连接事件
-     * @param e
-     */
-    recSocketClose(e) {
-      console.warn("Record Server connection closed (" + e.code + ")");
-    },
-    /**
-     * 登录录制服务器
-     */
-    loginRecordServer() {
-      let params = {
-        business: "RE",
-        id: 0x1001,
-        app_id: localStorage.getItem("appId"),
-        token: sessionStorage.getItem("token"),
-        seq: this.$streamNo()
-      };
-      this.recSocketSend(params);
-    },
-
-    /**
-     * 发送消息给Rec服务器
-     * @param params
-     */
-    recSocketSend(params) {
-      let paramsStr = JSON.stringify(params);
-      console.log("<=== Record Server：" + paramsStr);
-      this.recSocket.send(paramsStr);
+      this.sendMsgToEventGW(params);
     }
   },
 
   mounted() {
     if (
-      this.recSocket != null &&
-      this.recSocket.readyState === this.recSocket.OPEN
-    ) {
-      console.warn("Record Server connected!");
-    } else {
-      this.initRecSocket();
-    }
-    if (
-      this.gwSocket != null &&
-      this.gwSocket.readyState === this.gwSocket.OPEN
+      this.eventGwSocket != null &&
+      this.eventGwSocket.readyState === this.eventGwSocket.OPEN
     ) {
       console.warn("Event Gateway connected!");
     } else {
@@ -245,8 +140,7 @@ export default {
   },
 
   beforeDestroy() {
-    this.recSocket.close();
-    this.gwSocket.close();
+    this.eventGwSocket.close();
   }
 };
 </script>

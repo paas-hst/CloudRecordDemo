@@ -6,10 +6,10 @@
       <div style="margin-bottom: 20px;">
         <Input
           class="login-input"
-          v-model.trim="appId"
+          v-model.trim="dvlpId"
           prefix="ios-contacts"
           size="large"
-          placeholder="请输入App ID"
+          placeholder="请输入开发者ID"
           style="width: 300px;"
           autocomplete="on"
         />
@@ -17,10 +17,10 @@
       <div style="margin-bottom: 20px;">
         <Input
           class="login-input"
-          v-model.trim="appSecret"
+          v-model.trim="dvlpSecret"
           prefix="ios-contact"
           size="large"
-          placeholder="请输入App Secret"
+          placeholder="请输入开发者秘钥"
           style="width: 300px;"
           autocomplete="on"
         />
@@ -29,22 +29,10 @@
         <Input
           v-show="privateCloud"
           class="login-input"
-          v-model.trim="privateGwUrl"
+          v-model.trim="accessUrl"
           prefix="ios-list"
           size="large"
-          placeholder="事件推送网关地址"
-          style="width: 300px;"
-          autocomplete="on"
-        />
-      </div>
-      <div style="margin-bottom: 20px;">
-        <Input
-          v-show="privateCloud"
-          class="login-input"
-          v-model.trim="privateRecUrl"
-          prefix="ios-list"
-          size="large"
-          placeholder="录制服务器地址"
+          placeholder="接入服务地址"
           style="width: 300px;"
           autocomplete="on"
         />
@@ -96,18 +84,16 @@ export default {
   name: "Login",
   data() {
     return {
-      appId: "",
-      appSecret: "",
-      // 私有云录制服务器地址
-      privateRecUrl: "",
-      // 私有云事件推送网关地址
-      privateGwUrl: "",
+      // 开发者ID
+      dvlpId: "",
+      // 开发者秘钥
+      dvlpSecret: "",
+      // 开发者Token
+      dvlpToken: "",
       // 是否是私有云
       privateCloud: false,
-      // 公有云录制服务器地址
-      publicRecUrl: "ws://fsp-record-gw.hst.com/",
-      // 公有云事件推送网关地址
-      publicGwUrl: "ws://fsp-ep.hst.com:443"
+      // 云平台默认接入服务地址
+      accessUrl: "https://access.paas.hst.com",
     };
   },
   methods: {
@@ -115,38 +101,39 @@ export default {
      * 登录处理
      */
     async login() {
-      if (isEmpty(this.appId)) {
-        this.$Message.warning("appID不能为空");
+      if (isEmpty(this.dvlpId)) {
+        this.$Message.warning("开发者ID不能为空");
         return;
       }
-      if (isEmpty(this.appSecret)) {
-        this.$Message.warning("AppSecret不能为空");
+      if (isEmpty(this.dvlpSecret)) {
+        this.$Message.warning("开发者秘钥不能为空");
         return;
       }
-      if (this.privateCloud && isEmpty(this.privateRecUrl)) {
-        this.$Message.warning("服务器地址不能为空");
-        return;
-      }
-      if (this.privateCloud && isEmpty(this.privateGwUrl)) {
-        this.$Message.warning("服务器地址不能为空");
+      if (this.privateCloud && isEmpty(this.accessUrl)) {
+        this.$Message.warning("接入服务地址不能为空");
         return;
       }
 
       // 保存用户输入
-      localStorage.setItem("appId", this.appId);
-      localStorage.setItem("appSecret", this.appSecret);
-      localStorage.setItem("privateRecUrl", this.privateRecUrl);
-      localStorage.setItem("privateGwUrl", this.privateGwUrl);
+      localStorage.setItem("dvlpId", this.dvlpId);
+      localStorage.setItem("dvlpSecret", this.dvlpSecret);
+      localStorage.setItem("accessUrl", this.accessUrl);
       localStorage.setItem("privateCloud", this.privateCloud);
-      localStorage.setItem("publicGwUrl", this.publicGwUrl);
-      localStorage.setItem("publicRecUrl", this.publicRecUrl);
 
       try {
+        // 获取登录Token
         await this.getLoginToken();
-        // 由于EP暂未注册到Access，这段代码先注释
-        // if (!this.privateCloud) {
-        //   await this.getPublicGwUrl();
-        // }
+
+        // 获取业务网关
+        await this.getBusinessGwUrl();
+
+        // 获取事件网关
+        await this.getEventGwUrl();
+
+        // 获取Access Token
+        await this.getAccessToken();
+
+        // 跳转到主界面
         this.$router.push({ path: "/record/manager" });
       } catch (e) {
         this.$Message.error(e);
@@ -162,27 +149,25 @@ export default {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            appId: self.appId,
-            appSecret: self.appSecret
+            appId: self.dvlpId,
+            appSecret: self.dvlpSecret
           }),
           credentials: "omit"
         })
           .then(resp => {
-            resp
-              .json()
-              .then(body => {
-                if (body.code == "0") {
-                  sessionStorage.setItem("token", body.result);
-                  resolve();
-                } else {
-                  console.error(body);
-                  reject("获取Token失败");
-                }
-              })
-              .catch(e => {
-                console.error(e);
-                reject("获取Token失败");
-              });
+            if (resp.ok){
+              return resp.json();
+            }
+            reject("获取Token失败");
+          })
+          .then(data => {
+            if (data.code == 0 && data.result) {
+              self.dvlpToken = data.result;
+              resolve();
+            } else {
+              console.error(data);
+              reject("获取Token失败");
+            }
           })
           .catch(e => {
             console.error(e);
@@ -191,56 +176,113 @@ export default {
       });
     },
     /**
-     * 获取公有云事件推送网关
+     * 获取业务网关
      */
-    async getPublicGwUrl() {
+    async getBusinessGwUrl() {
       let self = this;
       return new Promise((resolve, reject) => {
-        fetch("https://access.paas.hst.com/server/address?appType=8", {
+        fetch(self.accessUrl + "/server/address?appType=10", {
           credentials: "omit"
         })
+          .then(resp => {
+            if (resp.ok) {
+              return resp.json();
+            }
+            reject("获取业务网关失败");
+          })            
           .then(data => {
-            data
-              .json()
-              .then(body => {
-                if (body.result) {
-                  self.publicGwUrl = body.result;
-                  localStorage.setItem("publicGwUrl", self.publicGwUrl);
-                  localStorage.setItem("publicRecUrl", self.publicRecUrl);
-                  resolve();
-                } else {
-                  console.error(JSON.stringify(body));
-                  reject("获取事件推送网关失败");
-                }
-              })
-              .catch((e) => {
-                console.error(e);
-                reject("获取事件推送网关失败");
-              });
+            if (data.result) {
+              console.log("Get business gateway result: " +data.result);
+              localStorage.setItem("businessGwUrl", data.result);
+              resolve();
+            } else {
+              console.error(JSON.stringify(data));
+              reject("获取业务网关失败");
+            }
           })
           .catch((e) => {
             console.error(e);
-            reject("获取事件推送网关失败");
+            reject("获取业务网关失败");
+          });
+      });
+    },
+    /**
+     * 获取事件网关
+     */
+    async getEventGwUrl() {
+      let self = this;
+      return new Promise((resolve, reject) => {
+        fetch(self.accessUrl + "/server/address?appType=8", {
+          credentials: "omit"
+        })
+          .then(resp => {
+            if (resp.ok) {
+              return resp.json();
+            }
+            reject("获取事件网关失败");
+          })  
+          .then(data => {
+            if (data.code == 0 && data.result) {
+              console.log("Get event gateway result: " + data.result);
+              localStorage.setItem("eventGwUrl", (data.result).replace(/;$/,""));
+              resolve();
+            } else {
+              console.error(data);
+              reject("获取事件网关失败");
+            }
+          })
+          .catch((e) => {
+            console.error(e);
+            reject("获取事件网关失败");
+          });
+      });
+    },
+    /**
+     * 获取访问Token
+     */
+    async getAccessToken() {
+      let self = this;
+      return new Promise((resolve, reject) => {
+        fetch(localStorage.getItem("businessGwUrl") + "/access/token", {
+          method: "GET",
+          headers: {
+            'Authorization': self.dvlpId + '.' + self.dvlpToken
+          }
+        })
+          .then(resp => {
+            if (resp.ok) {
+              return resp.json();
+            }
+            reject("获取Access Token失败");
+          })
+          .then(data => {
+            if (data.code == 0 && data.result) {
+              localStorage.setItem("accessToken", data.result.access_token);
+              resolve();
+            } else {
+              console.error(data);
+              reject("获取Access Token失败");
+            }
+          })
+          .catch((e) => {
+            console.error(e);
+            reject("获取Access Token失败");
           });
       });
     }
   },
   mounted() {
-    let appId = localStorage.getItem("appId");
-    if (!isEmpty(appId)) {
-      this.appId = appId;
+    let dvlpId = localStorage.getItem("dvlpId");
+    if (!isEmpty(dvlpId)) {
+      this.dvlpId = dvlpId;
     }
-    let appSecret = localStorage.getItem("appSecret");
-    if (!isEmpty(appSecret)) {
-      this.appSecret = appSecret;
+    let dvlpSecret = localStorage.getItem("dvlpSecret");
+    if (!isEmpty(dvlpSecret)) {
+      this.dvlpSecret = dvlpSecret;
     }
-    let recUrl = localStorage.getItem("privateRecUrl");
-    if (!isEmpty(recUrl)) {
-      this.privateRecUrl = recUrl;
-    }
-    let gwUrl = localStorage.getItem("privateGwUrl");
-    if (!isEmpty(gwUrl)) {
-      this.privateGwUrl = gwUrl;
+    let accessUrl = localStorage.getItem("accessUrl");
+    if (!isEmpty(accessUrl)) {
+      this.accessUrl = accessUrl;
     }
     let privateCloud = localStorage.getItem("privateCloud");
     if (!isEmpty(privateCloud)) {

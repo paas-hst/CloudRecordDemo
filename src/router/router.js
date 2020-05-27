@@ -1,6 +1,6 @@
 import Vue from 'vue'
 import Router from 'vue-router'
-import FrameBase from '../views/Base.vue'
+import Base from '../views/Base.vue'
 import RecordController from '../views/RecordController.vue';
 import RecordManager from '../views/RecordManager.vue';
 import Login from '../views/Login.vue';
@@ -14,7 +14,7 @@ const router = new Router({
         },
         {
             path: '/record',
-            component: FrameBase,
+            component: Base,
             children: [{
                     path: 'controller',
                     name: 'controller',

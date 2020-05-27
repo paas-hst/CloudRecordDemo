@@ -10,7 +10,7 @@
           </span>
         </Col>
         <Col span='6'>
-          <span class='app-id'>App ID：{{ appId }}</span>
+          <span class='app-id'>开发者ID：{{ dvlpId }}</span>
         </Col>
         <Col span='2' align='right'>
           <span style="text-align: right">
@@ -35,7 +35,7 @@ export default {
         type: String,
         default: '退出'
       },
-      appId: {
+      dvlpId: {
         type: String,
         default: '0530645e9f8a748bd2995a59ea181653'
       },

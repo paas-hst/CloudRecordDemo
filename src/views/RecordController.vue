@@ -9,9 +9,21 @@
         <span class="record-info-label">Record Type：</span>
         <span class="record-info-value">{{ recordType }}</span>
         <span class="record-info-label">Record State：</span>
-        <span class="record-info-value">{{ recordStateList[this.$route.params.recordState] }}</span>
-        <span class="record-info-label">Start Time：</span>
-        <span class="record-info-value">{{ this.$route.params.startTime }}</span>
+        <span class="record-info-value">{{ recordStateText }}</span>
+        <span style="float:right; margin-right:10px">
+          <Button
+            shape="circle"
+            type="primary"
+            style="width: 80px; height: 30px"
+            @click="pauseOrResumeRecord"
+          >{{ pauseOrResumeText }}</Button>
+          <Button
+            shape="circle"
+            type="primary"
+            style="width: 80px; height: 30px; margin-left: 10px; background-color: #F06B56; border: 0px"
+            @click="stopRecord"
+          >停止</Button>
+        </span>
       </div>
     </Row>
     <Row class="media-layout">
@@ -59,11 +71,7 @@
 
     <div class="show-info-panel">
       <div class="info-list">
-        <div
-          v-for="(item, index) in infoList"
-          :key="index"
-          class="info-item"
-        >
+        <div v-for="(item, index) in infoList" :key="index" class="info-item">
           <span class="time">{{item.time}}</span>
           <span :class="[item.status === 0 ? 'status-success' : 'status-error']">{{item.statusStr}}</span>
           <span class="info">-{{item.msg}}</span>
@@ -81,7 +89,11 @@ import { simpleDateFormat } from "../lib/dateUtil";
 export default {
   data() {
     return {
-      appId: localStorage.getItem("appId"),
+      pauseOrResumeText: "",
+      // 录制任务状态
+      recordStateText: "",
+      recordState: 0,
+      // 录制状态列表
       recordStateList: [
         "错误",
         "初始化",
@@ -89,8 +101,10 @@ export default {
         "排队中",
         "编码中",
         "上传中",
-        "完成"
+        "完成",
+        "暂停"
       ],
+      // 媒体类型
       mediaTypeMap: {
         屏幕共享: 0,
         音频: 1,
@@ -121,7 +135,10 @@ export default {
       mediaLayoutTemplate: [
         [{ x: 0, y: 0, w: 1920, h: 1080 }], // 0
         [{ x: 0, y: 0, w: 1920, h: 1080 }], // 1
-        [{ x: 0, y: 0, w: 960, h: 1080 }, { x: 960, y: 0, w: 960, h: 1080 }], // 2
+        [
+          { x: 0, y: 0, w: 960, h: 1080 },
+          { x: 960, y: 0, w: 960, h: 1080 }
+        ], // 2
         [
           // 3
           { x: 0, y: 0, w: 960, h: 540 },
@@ -147,17 +164,16 @@ export default {
   components: { Screen },
 
   mounted() {
-    this.$parent.recSocket.onmessage = this.recSocketOnmessage;
-    this.$parent.gwSocket.onmessage = this.gwSocketOnmessage;
+    this.$parent.eventGwSocket.onmessage = this.gwSocketOnmessage;
+
+    this.recordState = this.$route.params.recordState;
+
+    this.recordStateText = this.getRecordStateText(this.$route.params.recordState);
+
+    this.pauseOrResumeText = this.getPauseOrResumeText(this.$route.params.recordState);
 
     // 不管是手动录制还是自动录制，都需要显示媒体列表
     this.getFullDose();
-
-    // 获取任务参数
-    this.recordParams = this.getRecordParams(this.recordId);
-    if (!this.recordParams) {
-      this.$Message.warning("获取任务参数失败！");
-    }
 
     this.updateBaseAttr();
   },
@@ -174,23 +190,26 @@ export default {
       });
     },
     /**
-     * 查询本地缓存获取任务信息
-     * @param recordId
+     * 获取暂停或恢复文本
      */
-    getRecordParams(recordId) {
-      let taskMapStr = localStorage.getItem("tasks");
-      if (!taskMapStr) {
-        console.warn("Cannot find tasks in local storage!");
-        return null;
+    getPauseOrResumeText(state) {
+      if (state === 7) {
+        return "恢复";
+      } else {
+        return "暂停";
       }
-
-      let taskMap = JSON.parse(taskMapStr);
-      if (!taskMap) {
-        console.error("Parse tasks string failed: ", taskMapStr);
-        return null;
+    },
+    /**
+     * 获取录制状态的显示文本
+     */
+    getRecordStateText(state) {
+      if (state === -1) {
+        return "错误";
+      } else if (state > 0 && state <= 7) {
+        return this.recordStateList[state];
+      } else {
+        return "未知";
       }
-
-      return taskMap[this.appId][recordId];
     },
     /**
      * 用户选择/取消选择媒体项处理
@@ -214,11 +233,11 @@ export default {
       }
     },
     /**
-     * 接收到来自GW的消息
-     * @param e
+     * 接收到来自事件网关的消息
+     * @param msg
      */
-    gwSocketOnmessage(e) {
-      let response = e.data;
+    gwSocketOnmessage(msg) {
+      let response = msg.data;
       let rsp = null;
       if (
         response.id === "undefined" ||
@@ -300,19 +319,29 @@ export default {
      * 获取全量数据
      */
     getFullDose() {
-      if (this.fullDoseResult == null || this.fullDoseResult.length === 0) {
-        let params = {
-          id: 20008
-        };
-        this.gwSocketSend(params);
-      }
+      let params = {
+        id: 20008,
+        app_list: [
+          {
+            app_id: localStorage.getItem("queryAppId"),
+            group_list: [this.groupId]
+          }
+        ]
+      };
+      this.gwSocketSend(params);
     },
     /**
      * 订阅增量通知
      */
     subscribe() {
       let params = {
-        id: 20004
+        id: 20004,
+        app_list: [
+          {
+            app_id: localStorage.getItem("queryAppId"),
+            group_list: [this.groupId]
+          }
+        ]
       };
       this.gwSocketSend(params);
     },
@@ -321,11 +350,10 @@ export default {
      * @param params
      */
     gwSocketSend(params) {
-      params.business = "EP";
       params.seq_id = new Date().getTime();
       let paramsStr = JSON.stringify(params);
       console.log("<=== Event Gateway：" + paramsStr);
-      this.$parent.gwSocket.send(paramsStr);
+      this.$parent.eventGwSocket.send(paramsStr);
     },
     /**
      * 处理用户广播媒体通知
@@ -391,29 +419,120 @@ export default {
       this.updateMediaList();
     },
     /**
+     * 发送Post请求
+     */
+    sendPostRequest(
+      path,
+      body,
+      successInfo,
+      failInfo,
+      successCallback,
+      failCallback
+    ) {
+      fetch(localStorage.getItem("businessGwUrl") + path, {
+        method: "POST",
+        headers: {
+          authorization: localStorage.getItem("accessToken"),
+          "content-type": "application/json;charset=UTF-8"
+        },
+        body: JSON.stringify(body)
+      })
+        .then(response => {
+          if (response.ok) {
+            return response.json();
+          }
+          this.$Message.error(failInfo);
+          !!failCallback && failCallback();
+        })
+        .then(data => {
+          if (data.code === 0) {
+            this.$Message.success(successInfo);
+            !!data.result && console.log(data.result);
+            !!successCallback && successCallback();
+          } else {
+            this.$Message.error(failInfo);
+            console.log(data.msg);
+            !!failCallback && failCallback();
+          }
+        })
+        .catch(err => {
+          this.$Message.error(failInfo);
+          console.log(err);
+          !!failCallback && failCallback();
+        });
+    },
+    /**
+     * 暂停录制
+     */
+    pauseRecord() {
+      let param = {
+        app_id: localStorage.getItem("queryAppId"),
+        record_id: this.recordId
+      };
+      this.sendPostRequest(
+        "/v1/record/suspend",
+        param,
+        "暂停录制任务成功！",
+        "暂停录制任务失败！",
+        function() {
+          this.$router.push({ path: "/record/manager" });
+        }.bind(this)
+      );
+    },
+    /**
+     * 恢复录制
+     */
+    resumeRecord() {
+      let param = {
+        app_id: localStorage.getItem("queryAppId"),
+        record_id: this.recordId
+      };
+      this.sendPostRequest(
+        "/v1/record/resume",
+        param,
+        "恢复录制任务成功！",
+        "恢复录制任务失败！",
+        function() {
+          this.$router.push({ path: "/record/manager" });
+        }.bind(this)
+      );
+    },
+    /**
+     * 暂停或恢复
+     */
+    pauseOrResumeRecord() {
+      if (this.recordState == 7) {
+        this.resumeRecord();
+      } else {
+        this.pauseRecord();
+      }
+    },
+    /**
+     * 停止录制
+     */
+    stopRecord() {
+      let param = {
+        app_id: localStorage.getItem("queryAppId"),
+        record_id: this.recordId
+      };
+      this.sendPostRequest(
+        "/v1/record/finish",
+        param,
+        "停止录制任务成功！",
+        "停止录制任务失败！",
+        function() {
+          this.$router.push({ path: "/record/manager" });
+        }.bind(this)
+      );
+    },
+    /**
      * 设置布局
      */
-    setLayout() {
-      if (this.recordId == null || this.recordId.length === 0) {
-        this.$Message.warning("Record ID不能为空！");
-        return;
-      }
-
-      if (this.sendMediaList.length <= 0) {
-        this.$Message.warning("未选择任何媒体！");
-        return;
-      }
-
-      if (this.selectedVideoCount > 4) {
-        this.$Message.warning("最多允许同时录制4路视频和屏幕共享！");
-        return;
-      }
-
+    buildSetLayoutParam() {
       let videoList = [];
       let audioList = [];
       let mediaIndex = 0;
       let mediaLayout = this.mediaLayoutTemplate[this.selectedVideoCount];
-      console.warn("$$$$ mediaLayout: " + mediaLayout + " videoCount: " + this.selectedVideoCount);
       for (const item of this.sendMediaList) {
         if (item.mediaType === 0 || item.mediaType === 2) {
           // 视频和屏幕共享
@@ -421,7 +540,7 @@ export default {
             user_id: item.userId,
             media_id: item.mediaId,
             media_type: item.mediaType,
-            crop_mode: this.recordParams.videoCropMode
+            crop_mode: 1 // 平铺
           };
           console.warn("#### index: ", mediaIndex);
           videoListItem.x = mediaLayout[mediaIndex].x;
@@ -442,64 +561,38 @@ export default {
         }
       }
 
-      let params = {
-        id: 0x1006,
+      return {
+        app_id: localStorage.getItem("queryAppId"),
         record_id: this.recordId,
         audio_list: audioList,
         video_list: videoList
       };
-      this.recSocketSend(params);
     },
     /**
-     * 向录制服务器发送消息
-     * @param params
+     * 设置布局
      */
-    recSocketSend(params) {
-      params.business = "RE";
-      if (!params.seq) {
-        params.seq = this.$streamNo();
+    setLayout() {
+      if (this.recordId == null || this.recordId.length === 0) {
+        this.$Message.warning("Record ID不能为空！");
+        return;
       }
-      let paramsStr = JSON.stringify(params);
-      console.log("<=== Record Server：" + paramsStr);
-      this.$parent.recSocket.send(paramsStr);
-    },
-    /**
-     * 收到录制服务器消息处理
-     * @param e
-     */
-    recSocketOnmessage(e) {
-      let rsp = e.data;
-      let result = null;
-      if (rsp.id === "undefined" || rsp.id == null || rsp.id === "null") {
-        result = JSON.parse(rsp);
-      } else {
-        result = rsp;
+
+      if (this.sendMediaList.length <= 0) {
+        this.$Message.warning("未选择任何媒体！");
+        return;
       }
-      console.log("===> Record Server：" + JSON.stringify(result));
-      switch (result.id) {
-        case 0x2006: //设置布局
-          if (result.code === 0) {
-            let infoItem = {
-              time: simpleDateFormat(new Date(), "yyyy/MM/dd HH:mm:ss"),
-              status: 0,
-              statusStr: "成功",
-              msg: "开始录制，设置布局成功"
-            };
-            this.infoList.push(infoItem);
-          } else {
-            let infoItem = {
-              time: simpleDateFormat(new Date(), "yyyy/MM/dd HH:mm:ss"),
-              status: 1,
-              statusStr: "异常",
-              msg: "设置布局失败"
-            };
-            this.infoList.push(infoItem);
-          }
-          break;
-        default:
-          console.log("未知id：" + result.id);
-          break;
+
+      if (this.selectedVideoCount > 4) {
+        this.$Message.warning("最多允许同时录制4路视频和屏幕共享！");
+        return;
       }
+
+      this.sendPostRequest(
+        "/v1/record/set/layout",
+        this.buildSetLayoutParam(),
+        "设置布局成功！",
+        "设置布局失败！"
+      );
     }
   }
 };
